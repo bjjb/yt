@@ -1,7 +1,7 @@
 import 'https://unpkg.com/mocha@8.2.0/mocha.js'
 import 'https://unpkg.com/chai@4.2.0/chai.js'
-import { fake } from 'https://unpkg.com/sinon@9.2.1/pkg/sinon-esm.js'
 import 'https://unpkg.com/sinon-chai@3.5.0/lib/sinon-chai.js'
+import { fake } from 'https://unpkg.com/sinon@9.2.1/pkg/sinon-esm.js'
 import oauth, { url } from './oauth.js'
 import youtube from './youtube.js'
 
@@ -10,102 +10,91 @@ addEventListener('load', () => mocha.run())
 
 const { assert, expect } = chai
 
-const endpoint = 'https://example.com/auth'
-const request_type = 'token'
-const client_id = 'CLIENTID';
-const redirect_uri = 'https://localhost/callback'
+const options = {
+  endpoint:     () => 'https://example.com/auth',
+  request_type: () => 'token',
+  client_id:    () => 'CLIENTID',
+  redirect_uri: () => 'https://localhost/callback',
+}
 
-describe(`oauth({ endpoint, request_type, client_id, redirect_uri })`, () => {
-  const f = oauth({ endpoint, request_type, client_id, redirect_uri });
-
-  ['endpoint', 'request_type', 'client_id'].forEach((missing) => {
-    it(`throws an error if the ${missing} is missing`, () => {
-      let options = { endpoint, request_type, client_id }
-      delete options[missing]
-      expect(() => oauth(options)).to.throw(`${missing} required`)
-    })
+describe(`oauth`, () => {
+  it('is a function', () => {
+    expect(oauth).to.be.a('function')
   })
 
-  it('returns a function, f', () => {
-    expect(f).to.be.a('function')
-  });
-
-  describe('f({ sessionStorage: empty, location: empty })', () => {
+  describe('when the session is empty', () => {
     const sessionStorage = {}
-    const hash = ''
-    const replace = fake()
-    const location = { hash, replace }
-    const redirect = url({ endpoint, client_id, request_type, redirect_uri })
+    const location = { hash: '', replace: fake() }
     it('redirects to the auth url', () => {
-      f({ sessionStorage, location })()
-      expect(replace).to.have.been.calledWith(redirect)
+      const state = 'blubber'
+      oauth({ sessionStorage, location, state, ...options })
+      expect(location.replace).to.have.been.calledWith(url(options))
+      expect(sessionStorage).to.deep.eq({ accessTokenState: state })
     })
   })
-  describe('f({ sessionStorage: expired, location: empty })', () => {
+  describe('when the session is expired', () => {
     const sessionStorage = { accessToken: 'expired', accessTokenExpiresAt: Date.now() }
-    const hash = ''
-    const replace = fake()
-    const location = { hash, replace }
-    const redirect = url({ endpoint, client_id, request_type, redirect_uri })
+    const location = { hash: '', replace: fake() }
+    const state = () => 'blubber'
     it('redirects to the auth url', () => {
-      f({ sessionStorage, location })()
-      expect(replace).to.have.been.calledWith(redirect)
+      oauth({ sessionStorage, location, state, ...options })
+      expect(location.replace).to.have.been.calledWith(url({ state, ...options }))
+      expect(sessionStorage).to.deep.eq({ accessTokenState: state() })
     })
   })
-  describe('f({ sessionStorage: valid, location: empty })', () => {
-    const sessionStorage = { accessToken: 'valid', accessTokenExpiresAt: Date.now() + 1000 * 3600 }
-    const hash = ''
-    const replace = fake()
-    const location = { hash, replace }
+  describe('when the session is valid', () => {
+    const sessionStorage = { accessToken: 'valid', accessTokenExpiresAt: Date.now() + 9999 }
+    const location = { hash: '', replace: fake() }
     it('returns the token', () => {
-      expect(f({ sessionStorage, location })()).to.eq('valid')
-      expect(replace).not.to.have.been.called
+      expect(oauth({ sessionStorage, location, ...options })).to.eq('valid')
+      expect(location.replace).not.to.have.been.called
     })
   })
-  describe('f({ sessionStorage: empty, location: error })', () => {
+  describe('when the location indicates an error', () => {
     const sessionStorage = {}
-    const hash = '#error=foo'
-    const replace = fake()
-    const location = { hash, replace }
+    const location = { hash: '#error=ERROR', replace: fake() }
     it('throws an error (and does not redirect)', () => {
-      expect(f({ sessionStorage, location })).to.throw(/foo/)
-      expect(replace).not.to.have.been.called
+      expect(() => oauth({ sessionStorage, location, ...options })).to.throw(/ERROR/)
+      expect(location.replace).not.to.have.been.called
     })
   })
-  describe('f({ sessionStorage: empty, location: success })', () => {
-    const sessionStorage = {}
-    const hash = '#access_token=foo&expires_in=3600&state=STATE'
-    const replace = fake()
-    const location = { hash, replace }
+  describe(`when the location state doesn't match the session state`, () => {
+    const sessionStorage = { accessTokenState: 'A' }
+    const location = { hash: '#access_token=foo&state=B', replace: fake() }
     it('throws an error because of mismatched state', () => {
-      expect(f({ sessionStorage, location })).to.throw(/state mismatch/)
-      expect(replace).not.to.have.been.called
+      expect(() => oauth({ sessionStorage, location, ...options })).to.throw(/state mismatch/)
+      expect(location.replace).not.to.have.been.called
     })
   })
-  describe('f({ sessionStorage: pending, location: success })', () => {
+  describe('when the location indicates a new token', () => {
     const now = Date.now()
-    const sessionStorage = { accessTokenState: 'STATE' }
-    const hash = '#access_token=TOKEN&expires_in=3600&state=STATE'
-    const replace = fake()
-    const location = { hash, replace }
-    it('sets sessionStorage, clears location, and returns the token', () => {
-      expect(f({ sessionStorage, location })()).to.eq('TOKEN')
+    const sessionStorage = { accessTokenState: 'X' }
+    const location = { hash: '#access_token=TOKEN&expires_in=1&state=X', replace: fake() }
+    it('returns the token, having stored it and cleared the location', () => {
+      expect(oauth({ sessionStorage, location, ...options })).to.eq('TOKEN')
       expect(sessionStorage.accessToken).to.eq('TOKEN')
-      expect(sessionStorage.accessTokenExpiresAt).to.be.at.least(now + 3600 * 1000)
+      expect(sessionStorage.accessTokenExpiresAt).to.be.at.least(now + 1000)
       expect(sessionStorage.accessTokenState).to.be.undefined
       expect(location.hash).to.eq('')
-      expect(replace).not.to.have.been.called
+      expect(location.replace).not.to.have.been.called
     })
   })
 })
 
-describe(`youtube({ token })`, () => {
-  const token = () => 'TOKEN'
-  const fetch = fake()
-  const o = youtube({ token, fetch })
-  describe('channels', () => {
-    it('returns an iterable list of channels', () => {
-      expect(o.channels()).to.be.instanceof(Array)
+describe(`youtube`, () => {
+  it('is a function', () => {
+    expect(youtube).to.be.a('function')
+  })
+  describe('youtube({ token, fetch })', () => {
+    const token = fake.returns('TOKEN')
+    const results = [{}]
+    const fetch = fake.resolves({ json: fake.resolves(JSON.stringify(results)) })
+    const yt = youtube({ token, fetch })
+    describe('.search({ q })', () => {
+      it('calls token', () => {
+        youtube({ token, fetch })
+        expect(token).to.have.been.called
+      })
     })
   })
 })

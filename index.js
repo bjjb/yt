@@ -1,22 +1,20 @@
 'use strict'
 
-import Feadán from './feadán.js'
+import youtube from './youtube.js'
 
-self.Feadán = Feadán
+const client_id = '990154653919-271dvn0pa9v2nb8dtud4ecamqe43b8pa.apps.googleusercontent.com'
+const endpoint = 'https://accounts.google.com/o/oauth2/v2/auth'
+const request_type = 'token'
+const redirect_uri = location
+const scopes = [ '' ]
+const token = oauth({ client_id, endpoint, request_type, redirect_uri, scope, sessionStorage, location })
 
-console.log(`▶️ Welcome to the Feadán app, developer!
+console.log(`▶️ Welcome to the yt.js app, developer!
+This app makes use of the yt.js script to provide a simple API to YouTube.
 
-I've added a new class (Feadán → %o) to the window, which you can use to poke
-around. You can instantiate a new instance, and use it (for example) to log
-into YouTube and search for videos, or to see which playlists you have set up
-in your local database.
-
-There's also a test page (/test.html) which describes the behaviour of this
+There's a test page (/test.html) which describes the behaviour of this
 application when running on a sufficiently modern browser.
-`, Feadán)
+`)
 
 addEventListener('load', (event) => {
-  console.debug('Loaded: %o', event)
 })
-
-customElements.define('fadawn-playlist', Feadán.Playlist, { extends: 'ol' })
