@@ -33,7 +33,7 @@ const handler = async (request, response) => {
 
 const server = createServer(handler)
 
-server.listen(3000, (err) => {
+server.listen(port, (err) => {
   if (err) {
     return console.error(err)
   }
