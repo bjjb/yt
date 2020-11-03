@@ -14,17 +14,29 @@ const infoURL = (videoID) => {
   return url
 }
 
+const cors = (request, response) => {
+  const CORS_METHODS = ['GET', 'OPTIONS']
+  const CORS_HEADERS = ['*']
+  const { headers: { origin } } = request
+  if (origin) response.setHeader('Access-Control-Allow-Origin', origin)
+  response.setHeader('Access-Control-Allow-Methods', CORS_METHODS.join(','))
+  response.setHeader('Access-Control-Allow-Headers', CORS_HEADERS.join(','))
+}
+
 const handler = async (request, response) => {
-  const id = request.url.slice(1)
-  if (!id) return response.end('What are you looking for?')
-  const headers = { Accept: 'x-www-url-form-encoded' }
-  get(infoURL(id), { headers }, (resp) => {
+  const { method, url, headers: { accept } } = request
+  cors(request, response)
+  if (method === 'OPTIONS') return response.sendStatus(200)
+
+  const videoID = url.slice(1)
+  response.setHeader('Content-Type', 'application/json')
+  if (!videoID) return response.end(JSON.stringify({ status: 'ok' }))
+  get(infoURL(videoID), (resp) => {
     const { statusCode, statusText } = resp
     const chunks = []
     resp.setEncoding('utf8')
     resp.on('data', chunk => chunks.push(chunk))
     resp.on('end', () => {
-      response.setHeader('Content-Type', 'application/json')
       const result = Object.assign(parse(chunks), { statusCode, statusText })
       response.end(JSON.stringify(result))
     })
