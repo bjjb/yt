@@ -1,141 +1,203 @@
 package main
 
 import (
+	"encoding/json"
+	"errors"
+	"flag"
 	"fmt"
-	"io"
+	"io/ioutil"
 	"net/http"
+	"net/url"
 	"os"
+	"regexp"
 	"strings"
+	"text/template"
 )
 
-const name = "yt"
-const version = "0.0.1"
+const rex = "^[[:word:]]([[:word:]]|-){10}$"
 
-// init sets up ui to be a cli app with all the standard os goodies
+var regex *regexp.Regexp
+var fs http.Handler
+
+// https://youtube.com/get_video_info?video_id=
+const videoInfoURL = "https://youtube.com/get_video_info?video_id="
+
+func main() {
+	var videoID, webRoot, tmpl, addr string
+	var daemon bool
+	var t *template.Template
+	flag.StringVar(&videoID, "i", "", "get video info")
+	flag.StringVar(&webRoot, "D", "", "serve files from a static directory")
+	flag.BoolVar(&daemon, "d", false, "start a server")
+	flag.StringVar(&addr, "b", ":8080", "HTTP bind address")
+	flag.StringVar(&tmpl, "f", "{{.}}", "format output")
+	flag.Parse()
+
+	t, err := template.New("cli").Parse(tmpl)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "invalid format specifier (%s)", err)
+		os.Exit(2)
+	}
+
+	if daemon {
+		if webRoot != "" {
+			fs = http.FileServer(http.Dir(webRoot))
+			fmt.Fprintf(os.Stdout, "Serving files from %s, ", webRoot)
+		}
+		fmt.Fprintf(os.Stdout, "listening on %s...", addr)
+		err := http.ListenAndServe(addr, http.HandlerFunc(serveHTTP))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(9)
+		}
+		os.Exit(0)
+	}
+
+	if videoID != "" {
+		info, err := getVideoInfo(videoID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s\n", err)
+			os.Exit(3)
+		}
+		if err = t.Execute(os.Stdout, info); err != nil {
+			fmt.Fprintf(os.Stderr, "%s\n", err)
+			os.Exit(4)
+		}
+	}
+}
+
+type videoInfo struct {
+	VideoDetails struct {
+		ID               string   `json:"videoId"`
+		Title            string   `json:"title"`
+		LengthSeconds    string   `json:"lengthSeconds"`
+		Keywords         []string `json:"keywords"`
+		ChannelID        string   `json:"channelId"`
+		ShortDescription string   `json:"shortDescription"`
+		Thumbnail        struct {
+			Thumbnails []struct {
+				URL    string `json:"url"`
+				Width  int    `json:"width"`
+				Height int    `json:"height"`
+			} `json:"thumbnails"`
+		} `json:"thumbnail"`
+
+		AverageRating float64 `json:"averageRating"`
+		AllowRatings  bool    `json:"allowRatings"`
+		ViewCount     string  `json:"viewCount"`
+		Author        string  `json:"author"`
+		IsPrivate     bool    `json:"isPrivate"`
+		IsLiveContent bool    `json:"isLiveContent"`
+	} `json:"videoDetails"`
+	StreamingData struct {
+		ExpiresInSeconds string `json:"expiresInSeconds"`
+		Formats          []struct {
+			ITag             int    `json:"itag"`
+			URL              string `json:"url"`
+			MIMEType         string `json:"mimeType"`
+			Bitrate          int    `json:"bitrate"`
+			Width            int    `json:"width"`
+			Height           int    `json:"height"`
+			Quality          string `json:"quality"`
+			QualityLabel     string `json:"qualityLabel"`
+			LastModified     string `json:"lastModified"`
+			ContentLength    string `json:"contentLength"`
+			FPS              int    `json:"fps"`
+			ApproxDurationMS string `json:"approxDurationMs"`
+		} `json:"formats"`
+		AdaptiveFormats []struct {
+			ITag      int    `json:"itag"`
+			URL       string `json:"url"`
+			MIMEType  string `json:"mimeType"`
+			Bitrate   int    `json:"bitrate"`
+			Width     int    `json:"width"`
+			Height    int    `json:"height"`
+			InitRange struct {
+				Start string `json:"start"`
+				End   string `json:"end"`
+			} `json:"initRange"`
+			IndexRange struct {
+				Start string `json:"start"`
+				End   string `json:"end"`
+			} `json:"indexRange"`
+			LastModified     string `json:lastModified"`
+			ContentLength    string `json:"contentLength"`
+			Quality          string `json:"quality"`
+			FPS              int    `json:"fps"`
+			QualityLabel     string `json:"qualityLabel"`
+			ProjectionType   string `json:"projectionType"`
+			AverageBitrate   int    `json:"averageBitrate"`
+			ApproxDurationMS string `json:"approxDurationMs"`
+		} `json:"adaptiveFormats"`
+	} `json:"streamingData"`
+}
+
+func getVideoInfo(id string) (*videoInfo, error) {
+	if regexp.MustCompile("^[[:word:]][[[:word]]-]{10}$").MatchString(id) {
+		return nil, fmt.Errorf("invalid video ID %s", id)
+	}
+	u, err := url.Parse(videoInfoURL + id)
+	if err != nil {
+		return nil, err
+	}
+	u.Query().Set("video_id", id)
+	resp, err := http.Get(u.String())
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("response status %d (%s)", resp.StatusCode, resp.Status)
+	}
+	if resp.Header.Get("Content-Type") != "application/x-www-form-urlencoded" {
+		return nil, fmt.Errorf("unexpected response content %s", resp.Header.Get("Content-Type"))
+	}
+	defer resp.Body.Close()
+	data, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	values, err := url.ParseQuery(string(data))
+	if err != nil {
+		return nil, err
+	}
+	if values.Get("status") == "fail" {
+		return nil, fmt.Errorf("errorcode %s (%s)", values.Get("errorcode"), values.Get("reason"))
+	}
+	if values.Get("player_response") == "" {
+		return nil, errors.New("no player_response")
+	}
+	info := new(videoInfo)
+	err = json.NewDecoder(strings.NewReader(values.Get("player_response"))).Decode(info)
+	return info, err
+}
+
+func serveHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		w.Header().Add("Access-Control-Allow-Methods", http.MethodGet)
+		w.Header().Add("Access-Control-Allow-Origin", "*")
+		w.Header().Add("Access-Control-Allow-Headers", "Accept")
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+		return
+	}
+	if regex.MatchString(r.URL.Path[1:]) {
+		info, err := getVideoInfo(r.URL.Path[1:])
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		if err := json.NewEncoder(w).Encode(info); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+		return
+	}
+	fs.ServeHTTP(w, r)
+}
+
 func init() {
-	ui = &cli{
-		args: os.Args,
-		in:   os.Stdin,
-		out:  os.Stdout,
-		err:  os.Stderr,
-		env:  os.Getenv,
-		exit: os.Exit,
-	}
-}
-
-// main simply calls the main function of the ui
-func main() { ui.main() }
-
-// An app simply exposes a main function
-type app interface{ main() }
-
-// a cli wraps os variables, and implements app
-type cli struct {
-	args     []string
-	in       io.Reader
-	out, err io.Writer
-	exit     func(int)
-	env      func(string) string
-}
-
-// main parses flags and takes some action based on its setup
-func (c *cli) main() {
-	fmt.Fprintln(c.out, "hello!")
-}
-
-// ui is the app that will be invoked by main
-var ui app
-
-// getenv is a helper function to get a value from the environment with a
-// fallback in case it's blank or unset
-func getenv(name, fallback string) string {
-	if v := os.Getenv(name); v != "" {
-		return v
-	}
-	return fallback
-}
-
-// oauth returns is a middleware to provide OAuth2 tokens and to grant
-// permissions to requests which contain valid tokens.
-func oauth() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-	})
-}
-
-// cors returns a CORS middleware
-func cors() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		method := r.Method
-		get := func(k string) string { return r.Header.Get(k) }
-		set := func(k, v string) { w.Header().Set(k, v) }
-		add := func(k, v string) { w.Header().Add(k, v) }
-		err := func(msg string, status int) { http.Error(w, msg, status) }
-		cut := func(v string) []string { return trim(strings.Split(v, ",")) }
-		reqMethod := get("Access-Control-Request-Method")
-		add("Vary", "Origin")
-		add("Vary", "Access-Control-Request-Method")
-		add("Vary", "Access-Control-Request-Headers")
-		if method == http.MethodOptions && reqMethod != "" {
-			if get("Origin") == "" {
-				err("missing Origin", http.StatusBadRequest)
-				return
-			}
-			reqHeaders := cut(r.Header.Get("Access-Control-Request-Headers"))
-			set("Access-Control-Allow-Origin", get("Origin"))
-			set("Access-Control-Allow-Methods", reqMethod)
-			set("Access-Control-Allow-Headers", strings.Join(reqHeaders, ", "))
-			set("Access-Control-Allow-Credentials", "true")
-		}
-	})
-}
-
-// youtube returns a http.Handler which can search for things on YouTube
-func youtube() http.Handler {
-	return new(http.ServeMux)
-}
-
-// trim is a utility function which trims whitespace from all the values
-func trim(values []string) []string {
-	result := []string{}
-	for _, v := range values {
-		result = append(result, strings.TrimSpace(v))
-	}
-	return result
-}
-
-// a doneWriter is a http.ResponseWriter whose done function is called
-// whenever something is written (which means the response is finished).
-type doneWriter struct {
-	http.ResponseWriter
-	done func()
-}
-
-// WriteHeader implements ResponseWriter.WriteHeader calling the done function
-func (w *doneWriter) WriteHeader(status int) {
-	w.done()
-	w.ResponseWriter.WriteHeader(status)
-}
-
-// WriteHeader implements ResponseWriter.Write calling the done function
-func (w *doneWriter) Write(b []byte) (int, error) {
-	w.done()
-	return w.ResponseWriter.Write(b)
-}
-
-// Chains a list of handlers together - the returned http.Handler will invoke
-// each in turn until either w.WriteHeader or w.Write has been called (which
-// indicates that the chain stops).
-func chain(handlers ...http.Handler) http.Handler {
-	var done bool
-	wrap := func(w http.ResponseWriter) http.ResponseWriter {
-		return &doneWriter{w, func() { done = true }}
-	}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		for _, handler := range handlers {
-			handler.ServeHTTP(wrap(w), r)
-			if done {
-				return
-			}
-		}
-	})
+	regex = regexp.MustCompile(rex)
+	fs = http.HandlerFunc(http.NotFound)
 }
