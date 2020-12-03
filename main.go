@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -22,6 +23,16 @@ var fs http.Handler
 // https://youtube.com/get_video_info?video_id=
 const videoInfoURL = "https://youtube.com/get_video_info?video_id="
 
+var templateFuncs = template.FuncMap{
+	"json": func(i *videoInfo) (string, error) {
+		b := new(bytes.Buffer)
+		if err := json.NewEncoder(b).Encode(i); err != nil {
+			return "", nil
+		}
+		return b.String(), nil
+	},
+}
+
 func main() {
 	var videoID, webRoot, tmpl, addr string
 	var daemon bool
@@ -30,10 +41,10 @@ func main() {
 	flag.StringVar(&webRoot, "D", "", "serve files from a static directory")
 	flag.BoolVar(&daemon, "d", false, "start a server")
 	flag.StringVar(&addr, "b", ":8080", "HTTP bind address")
-	flag.StringVar(&tmpl, "f", "{{.}}", "format output")
+	flag.StringVar(&tmpl, "f", `{{json .}}`, "format output")
 	flag.Parse()
 
-	t, err := template.New("cli").Parse(tmpl)
+	t, err := template.New("cli").Funcs(templateFuncs).Parse(tmpl)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "invalid format specifier (%s)", err)
 		os.Exit(2)
@@ -120,7 +131,7 @@ type videoInfo struct {
 				Start string `json:"start"`
 				End   string `json:"end"`
 			} `json:"indexRange"`
-			LastModified     string `json:lastModified"`
+			LastModified     string `json:"lastModified"`
 			ContentLength    string `json:"contentLength"`
 			Quality          string `json:"quality"`
 			FPS              int    `json:"fps"`
