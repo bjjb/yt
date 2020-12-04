@@ -2,9 +2,7 @@ package cmd
 
 import (
 	"bytes"
-	"fmt"
 	"io"
-	"os"
 	"text/template"
 )
 
@@ -34,7 +32,12 @@ func (o *Opt) Long() string {
 
 // Description gets the description of o in the given context
 func (o *Opt) Description() string {
-	return o.render(o.description, o)
+	return o.render(o.description)
+}
+
+// Action gets the action which will be performed when the option is parsed
+func (o *Opt) Action() func() {
+	return o.action
 }
 
 func (o *Opt) on(c *Cmd) *Opt {
@@ -42,7 +45,7 @@ func (o *Opt) on(c *Cmd) *Opt {
 	return o
 }
 
-func (o *Opt) render(t *template.Template, ctx interface{}) string {
+func (o *Opt) render(t *template.Template) string {
 	b := new(bytes.Buffer)
 	var stderr io.Writer
 	var exit func(int)
@@ -50,15 +53,8 @@ func (o *Opt) render(t *template.Template, ctx interface{}) string {
 		stderr = o.cmd.stderr
 		exit = o.cmd.exit
 	}
-	if stderr == nil {
-		stderr = os.Stderr
-	}
-	if exit == nil {
-		exit = os.Exit
-	}
-	if err := t.Execute(b, ctx); err != nil {
-		fmt.Fprintf(stderr, "render failed - %s (%e)", t.Name(), err)
-		exit(ErrnoRenderFailed)
+	if err := t.Execute(b, o); err != nil {
+		fatal(stderr, exit, ErrnoRenderFailed, err.Error())
 	}
 	return b.String()
 }

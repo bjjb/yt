@@ -1,8 +1,8 @@
+// Package cmd provides functions to help build command-line applications.
 package cmd
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 	"text/template"
 )
@@ -49,12 +49,12 @@ func (c *Cmd) Version() string {
 
 // Summary gets the summary of the Cmd in the given context
 func (c *Cmd) Summary() string {
-	return c.render(c.summary, nil)
+	return c.render(c.summary)
 }
 
 // Description gets the description of the Cmd in the given context
 func (c *Cmd) Description() string {
-	return c.render(c.description, nil)
+	return c.render(c.description)
 }
 
 // Options gets the attached options
@@ -78,7 +78,7 @@ func Command(name, version, summary, description string) *Cmd {
 }
 
 // New builds a new Cmd from Directives
-func New(directives ...Directive) *Cmd {
+func New(directives ...Modifier) *Cmd {
 	c := new(Cmd)
 	for _, directive := range directives {
 		c = directive(c)
@@ -86,9 +86,9 @@ func New(directives ...Directive) *Cmd {
 	return c
 }
 
-// A Directive is a command-modifying function, such as Name (which sets the
-// name).
-type Directive func(*Cmd) *Cmd
+// A Modifier is a command-modifying function, such as Name (which sets the
+// command's name).
+type Modifier func(*Cmd) *Cmd
 
 func (c *Cmd) setName(name string) *Cmd {
 	c.name = name
@@ -115,6 +115,31 @@ func (c *Cmd) setAction(action func(*Ctx)) *Cmd {
 	return c
 }
 
+func (c *Cmd) setStdout(w io.Writer) *Cmd {
+	c.stdout = w
+	return c
+}
+
+func (c *Cmd) setStderr(w io.Writer) *Cmd {
+	c.stderr = w
+	return c
+}
+
+func (c *Cmd) setStdin(r io.Reader) *Cmd {
+	c.stdin = r
+	return c
+}
+
+func (c *Cmd) setExit(f func(int)) *Cmd {
+	c.exit = f
+	return c
+}
+
+func (c *Cmd) setGetenv(f func(string) string) *Cmd {
+	c.getenv = f
+	return c
+}
+
 func (c *Cmd) addOptions(opts ...*Opt) *Cmd {
 	for _, o := range opts {
 		c.opts = append(c.opts, o.on(c))
@@ -129,63 +154,86 @@ func (c *Cmd) addCommands(cmds ...*Cmd) *Cmd {
 	return c
 }
 
-func (c *Cmd) render(t *template.Template, ctx interface{}) string {
-	b := new(bytes.Buffer)
-	if ctx == nil {
-		ctx = c
-	}
-	if err := t.Execute(b, ctx); err != nil {
-		fmt.Fprintf(c.stderr, "render failed - %s (%e)", t.Name(), err)
-		c.exit(ErrnoRenderFailed)
-	}
-	return b.String()
-}
-
 // Name gets a directive to set a command's name
-func Name(name string) Directive {
-	return Directive(func(c *Cmd) *Cmd {
+func Name(name string) Modifier {
+	return Modifier(func(c *Cmd) *Cmd {
 		return c.setName(name)
 	})
 }
 
 // Version gets a directive to set a command's version
-func Version(version string) Directive {
-	return Directive(func(c *Cmd) *Cmd {
+func Version(version string) Modifier {
+	return Modifier(func(c *Cmd) *Cmd {
 		return c.setVersion(version)
 	})
 }
 
 // Summary gets a directive to set a command's summary
-func Summary(summary string) Directive {
-	return Directive(func(c *Cmd) *Cmd {
+func Summary(summary string) Modifier {
+	return Modifier(func(c *Cmd) *Cmd {
 		return c.setSummary(summary)
 	})
 }
 
 // Description gets a directive to set a command's description
-func Description(description string) Directive {
-	return Directive(func(c *Cmd) *Cmd {
+func Description(description string) Modifier {
+	return Modifier(func(c *Cmd) *Cmd {
 		return c.setDescription(description)
 	})
 }
 
 // Action gets a directive to add an action function to a command
-func Action(action func(*Ctx)) Directive {
-	return Directive(func(c *Cmd) *Cmd {
+func Action(action func(*Ctx)) Modifier {
+	return Modifier(func(c *Cmd) *Cmd {
 		return c.setAction(action)
 	})
 }
 
+// Stdout gets a modifier to set the standard output stream of the command
+func Stdout(w io.Writer) Modifier {
+	return Modifier(func(c *Cmd) *Cmd {
+		return c.setStdout(w)
+	})
+}
+
+// Stderr gets a modifier to set the standard error stream of the command
+func Stderr(w io.Writer) Modifier {
+	return Modifier(func(c *Cmd) *Cmd {
+		return c.setStderr(w)
+	})
+}
+
+// Stdin gets a modifier to set the standard input stream of the command
+func Stdin(r io.Reader) Modifier {
+	return Modifier(func(c *Cmd) *Cmd {
+		return c.setStdin(r)
+	})
+}
+
+// Exit gets a modifier to set the exit function of the command
+func Exit(f func(int)) Modifier {
+	return Modifier(func(c *Cmd) *Cmd {
+		return c.setExit(f)
+	})
+}
+
+// Getenv gets a modifier to set the exit function of the command
+func Getenv(f func(string) string) Modifier {
+	return Modifier(func(c *Cmd) *Cmd {
+		return c.setGetenv(f)
+	})
+}
+
 // Options gets a directive to add Opts to a Cmd
-func Options(opts ...*Opt) Directive {
-	return Directive(func(c *Cmd) *Cmd {
+func Options(opts ...*Opt) Modifier {
+	return Modifier(func(c *Cmd) *Cmd {
 		return c.addOptions(opts...)
 	})
 }
 
 // Commands gets a directive to add sub-Cmds to a Cmd
-func Commands(cmds ...*Cmd) Directive {
-	return Directive(func(c *Cmd) *Cmd {
+func Commands(cmds ...*Cmd) Modifier {
+	return Modifier(func(c *Cmd) *Cmd {
 		return c.addCommands(cmds...)
 	})
 }
@@ -193,4 +241,12 @@ func Commands(cmds ...*Cmd) Directive {
 func (c *Cmd) on(parent *Cmd) *Cmd {
 	c.cmd = parent
 	return c
+}
+
+func (c *Cmd) render(t *template.Template) string {
+	b := new(bytes.Buffer)
+	if err := t.Execute(b, c); err != nil {
+		fatal(c.stderr, c.exit, ErrnoRenderFailed, err.Error())
+	}
+	return b.String()
 }

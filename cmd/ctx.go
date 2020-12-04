@@ -42,3 +42,14 @@ func (c *Ctx) Render(t *template.Template) string {
 	}
 	return b.String()
 }
+
+func fatal(w io.Writer, exit func(int), errno int, format string, a ...interface{}) {
+	if w == nil {
+		w = os.Stderr
+	}
+	if exit == nil {
+		exit = os.Exit
+	}
+	fmt.Fprintf(w, format, a...)
+	exit(errno)
+}
