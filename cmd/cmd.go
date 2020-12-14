@@ -1,4 +1,5 @@
 // Package cmd provides functions to help build command-line applications.
+// Each application (*Cmd) can contain nested applications.
 package cmd
 
 import (
